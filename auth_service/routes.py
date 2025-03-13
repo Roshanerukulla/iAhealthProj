@@ -1,58 +1,105 @@
 from flask import Blueprint, request, jsonify
-from models import db, User
+from flask_login import login_user, login_required, logout_user, current_user
+from models import db, Users, UserProfile, UserPreferences
 from flask_bcrypt import Bcrypt
-from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 
-auth = Blueprint("auth", __name__)
+# Initialize Bcrypt and Blueprint
 bcrypt = Bcrypt()
-login_manager = LoginManager()
+auth = Blueprint("auth", __name__)
 
-@login_manager.user_loader
-def load_user(user_id):
-    return User.query.get(int(user_id))
+# ---------------------- ROUTES ------------------------
 
+# 1️⃣ Register New User
 @auth.route("/register", methods=["POST"])
 def register():
     data = request.json
-    email = data.get("email")
-    password = data.get("password")
-    confirm_password = data.get("confirm_password")
-
-    if not email or not password or not confirm_password:
-        return jsonify({"error": "All fields are required"}), 400
+    email = data["email"]
+    password = data["password"]
+    confirm_password = data["confirm_password"]
 
     if password != confirm_password:
         return jsonify({"error": "Passwords do not match"}), 400
 
-    existing_user = User.query.filter_by(email=email).first()
+    # Check if email already exists
+    existing_user = Users.query.filter_by(email=email).first()
     if existing_user:
         return jsonify({"error": "Email already registered"}), 400
 
-    new_user = User(email=email)
-    new_user.set_password(password)  # Hash the password
+    hashed_password = bcrypt.generate_password_hash(password).decode("utf-8")
+    new_user = Users(email=email, password=hashed_password)
+    
     db.session.add(new_user)
     db.session.commit()
+    
+    return jsonify({"message": "User registered successfully!"}), 201
 
-    return jsonify({"message": "User registered successfully"}), 201
 
+# 2️⃣ User Login
 @auth.route("/login", methods=["POST"])
 def login():
     data = request.json
-    email = data.get("email")
-    password = data.get("password")
+    email = data["email"]
+    password = data["password"]
 
-    if not email or not password:
-        return jsonify({"error": "Email and password are required"}), 400
+    user = Users.query.filter_by(email=email).first()
 
-    user = User.query.filter_by(email=email).first()
-    if not user or not user.check_password(password):
-        return jsonify({"error": "Invalid credentials"}), 401
+    if user and bcrypt.check_password_hash(user.password, password):
+        login_user(user)
+        return jsonify({"message": "Login successful!"})
+    
+    return jsonify({"error": "Invalid credentials"}), 401
 
-    login_user(user)
-    return jsonify({"message": "Login successful"}), 200
 
+# Enter Basic Information (After Login)
+@auth.route("/profile", methods=["POST"])
+@login_required
+def update_profile():
+    data = request.json
+
+    profile = UserProfile(
+        user_id=current_user.id,
+        first_name=data["first_name"],
+        last_name=data["last_name"],
+        preferred_name=data["preferred_name"],
+        birth_date=data["birth_date"],
+        gender=data["gender"]
+    )
+
+    db.session.add(profile)
+    db.session.commit()
+
+    return jsonify({"message": "Profile updated successfully!"})
+
+
+# 4️⃣ Enter Preferences
+@auth.route("/preferences", methods=["POST"])
+@login_required
+def update_preferences():
+    data = request.json
+
+    preferences = UserPreferences(
+        user_id=current_user.id,
+        privacy_policies=data["privacy_policies"],
+        data_share=data["data_share"],
+        searches=data["searches"],
+        answers=data["answers"],
+        storing=data["storing"]
+    )
+
+    db.session.add(preferences)
+    db.session.commit()
+
+    return jsonify({"message": "Preferences saved successfully!"})
+
+
+# 5️⃣ Logout
 @auth.route("/logout", methods=["POST"])
 @login_required
 def logout():
     logout_user()
-    return jsonify({"message": "Logged out successfully"}), 200
+    return jsonify({"message": "Logged out successfully!"})
+
+
+# Register routes in the main app
+def register_routes(app):
+    app.register_blueprint(auth, url_prefix="/auth")
